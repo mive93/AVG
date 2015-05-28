@@ -1,0 +1,359 @@
+model AGV
+uses "mmxprs"; 
+
+parameters
+	dati = 'datiAGV2.txt'
+	nMuletti = 20
+	pesoMax = 800
+	volMax = 100000
+	inf = 1000000
+end-parameters
+
+
+forward function Dijkstra(Vprimo:integer, d :integer): integer
+forward procedure CamminiMinimi
+forward procedure stampa
+forward procedure generaS(Vprimo: set of integer, S : set of integer, k: integer, n: integer, inizio:integer)
+forward procedure ClarkWright
+forward function calcSavings(i: integer,j: integer) : integer
+forward function cerca(i: integer,j: integer) : boolean
+forward procedure VRP
+	
+declarations
+ 	nSD : integer
+ 	nNodi : integer
+ 	nMerci : integer
+end-declarations
+
+
+initializations from dati
+	nNodi
+	nMerci
+	nSD
+end-initializations
+
+declarations
+	nNodiFinali = nMerci+1 ! numero nodi grafo finale
+	pesiArchi: array(1..nNodi, 1..nNodi) of integer ! pesi archi del grafo iniziale
+	pesiArchiFinali : array (1..nNodiFinali, 1..nNodiFinali) of integer ! pesi archi del grafo finale
+	SD : array(1..nSD) of integer ! array con sorgenti e destinazioni
+	pMerci : array(1..nMerci) of integer ! pesi delle merci da prendere
+	vMerci : array (1..nMerci) of integer !volumi delle merci da prendere
+		
+	distanze : array (1..nNodi) of integer ! distanze dijkstra
+	visitati : array (1..nNodi) of boolean ! nodi visitati dijkstra
+
+	route: array(1..nMerci,1..5) of integer ! percorsi dei muletti dell'euristico
+	saving: array(1..nNodiFinali,1..nNodiFinali) of integer ! saving dei vari indici i,j
+	IndexList: array(1..(round((nNodiFinali*nNodiFinali/2))-nNodiFinali),1..2) of integer 
+	!lista degli indici dei saving ordinati per valori decrescenti
+	pesoEuristico: integer ! Peso dei cammini ottenuto con l'euristico
+	mulettiEuristico : integer ! numero di muletti usati dall'euristico
+	
+	x:array(1..nNodiFinali,1..nNodiFinali) of mpvar ! percorsi finali
+	Vprimo : set of integer ! tutti i vertici tranne la sorgente
+	S : set of integer ! possibile route del grafo
+	V : set of integer ! tutti i vertici
+	Segn : set of integer ! V-S
+	volS : integer ! volume totale delle merci nella route S
+    pesoS : integer ! peso totale delle merci nella route S
+	z : linctr ! funzione obiettivo
+end-declarations
+
+
+initializations from dati
+	pesiArchi
+	SD
+	pMerci
+	vMerci
+	
+end-initializations
+
+
+function Dijkstra (Vprimo:integer, d :integer): integer
+
+!inizializzazione
+forall(i in 1..nNodi) do
+	distanze(i) := inf
+	visitati(i) := false
+end-do
+distanze(Vprimo) := 0;
+
+
+while(true) do
+	m := inf
+	forall (i in 1..nNodi)
+		if(visitati(i)=false and distanze(i)<=m ) then
+			m := distanze(i)
+			j := i
+		end-if
+	visitati(j) := true ;
+	
+	if( j = d or m = inf)then
+		returned:= distanze(d)
+	 	break;
+	end-if 
+		
+	forall (i in 1..nNodi)
+		if(pesiArchi(j,i) <> 0 and distanze(i) > distanze(j)+pesiArchi(j,i))then
+			distanze(i) := distanze(j) + pesiArchi(j,i)
+		end-if
+end-do
+
+
+end-function
+
+
+procedure CamminiMinimi
+
+	sorgenti :=1
+	destinazioni :=2
+	partenza:=2
+	riga:=1
+	colonna:=partenza
+	forall(i in 1..round(nSD/2)) do
+	
+		!riempo la matrice finale
+		
+		peso := Dijkstra (SD(sorgenti),SD(destinazioni))
+		pesiArchiFinali(riga,colonna) := peso
+		pesiArchiFinali(colonna,riga) := peso
+		
+		if(colonna = nNodiFinali) then
+			riga := riga+1
+			partenza := partenza+1
+			colonna := partenza
+		else
+			colonna:=colonna+1
+		end-if
+		
+		!passo ai prossimi sorgente-destinazione
+		sorgenti := sorgenti +2
+		destinazioni := destinazioni +2
+		
+	end-do
+	
+end-procedure
+
+! Calcola i saving
+function calcSavings(i: integer,j: integer) : integer
+	
+	s := pesiArchiFinali(i,1) - pesiArchiFinali(i,j) + pesiArchiFinali(1,j)
+	returned:= s
+	
+end-function
+
+!controlla se due route si possono fondere in una sola
+function cerca(i: integer,j: integer) : boolean
+
+	returned := true
+	if((route(i,3) = 1 and route(j,1) = 1)) then
+		returned := false
+	end-if
+	
+end-function
+
+procedure ClarkWright
+	
+	forall(i in 1..nMerci) do
+		forall(j in 1..5) do
+			if(j = 2) then
+				route(i,j) := i + 1
+			else if (j = 4 ) then
+				route(i,j) := pMerci(i)
+				else if (j = 5) then
+					route(i,j) := vMerci(i)
+					else
+						route(i,j) := 1
+					end-if
+				end-if
+			end-if
+		end-do
+	end-do
+	
+	h:=1
+	forall(i in 2..nNodiFinali) do
+		forall(j in 2..nNodiFinali)
+			if(i <> j) then
+				savings(i,j):=calcSavings(i,j)
+			end-if
+	end-do
+	
+	ia:=0
+	ja:=0
+	mapp := 0
+	forall(it in 1..(round((nNodiFinali*nNodiFinali/2))-nNodiFinali)) do
+		mx:=0
+		forall(i in 1..nNodiFinali)
+			forall(j in 1..nNodiFinali)
+				if(j>=i and savings(i,j) >= mx) then
+					mx := savings(i,j)
+					ia := i;
+					ja := j 
+				end-if
+		IndexList(it,1) := ia
+		IndexList(it,2) := ja
+		if(mx = 0) then
+			savings(ia,ja) := -1
+		else
+			savings(ia,ja) := -savings(ia,ja)
+		end-if
+		mapp := mx		
+	end-do
+			
+	forall(i in 1..(round((nMerci*nMerci/2))-nMerci)) do
+		if(route(IndexList(i,1)-1,4) + route(IndexList(i,2)-1,4) <= pesoMax and route(IndexList(i,1)-1,5) + route(IndexList(i,2)-1,5) <= volMax and cerca(IndexList(i,1)-1,IndexList(i,2)-1) = false ) then
+			route(IndexList(i,1)-1,3) := IndexList(i,2)
+			route(IndexList(i,2)-1,1) := IndexList(i,1) 
+			route(IndexList(i,1)-1,4) := route(IndexList(i,1)-1,4) + route(IndexList(i,2)-1,4)
+			route(IndexList(i,2)-1,4) := route(IndexList(i,2)-1,4) + route(IndexList(i,1)-1,4)
+			route(IndexList(i,1)-1,5) := route(IndexList(i,1)-1,5) + route(IndexList(i,2)-1,5)
+			route(IndexList(i,2)-1,5) := route(IndexList(i,2)-1,5) + route(IndexList(i,1)-1,5)
+		end-if
+	end-do
+	
+	pesoEuristico:=0
+	forall(i in 1..nMerci) do
+			pesoEuristico:= pesoEuristico + pesiArchiFinali(route(i,2),route(i,3))
+	end-do
+	forall(i in 1..nMerci) do
+		if(route(i,1) = 1) then
+			pesoEuristico:= pesoEuristico + pesiArchiFinali(route(i,1),route(i,2))
+		end-if
+	end-do
+	
+	mulettiEuristico :=0 
+	forall(i in 1..nMerci) do
+		if(route(i,3) = 1)then
+			mulettiEuristico := mulettiEuristico +1
+		end-if
+	end-do
+	
+	
+	
+end-procedure
+
+!Genero tutte le possibili route del mio grafo
+! e per ognuna di esse inserisco un Capacity Cut Constraint
+procedure generaS(Vprimo: set of integer, S : set of integer, k: integer, n: integer, inizio:integer)
+if(k = 0)then
+	forall(j in S)do
+		
+		forall(i in S) do 
+    	    volS := volS + vMerci(i-1)
+        	pesoS := pesoS + pMerci (i-1)
+        end-do
+        
+        rV:= ceil(volS / volMax)
+        rP:= ceil(pesoS / pesoMax)
+        				
+        Segn := V - S
+        r:= maxlist (rV,rP)
+        				
+        sum(i1 in Segn, j1 in S) x(i1,j1) >= r
+        
+        volS :=0
+        pesoS := 0
+	end-do
+	
+	S-={S(getsize(S))}
+	else
+		i:=inizio
+		
+		while (i<=n) do
+			S+={Vprimo(i)}
+			generaS(Vprimo,S,k-1,n,i+1)
+			i:=i+1
+		end-do
+		
+		if(getsize(S) <> 0)then
+		S-={S(getsize(S))}
+		end-if
+end-if
+
+
+end-procedure
+
+
+procedure VRP
+		
+	!Riempo V e Vprimo
+	forall (i in 1..nNodiFinali) V += {i}
+	forall(i in 1..nMerci) 	Vprimo+={i+1}
+	
+	forall(i in 1..nNodiFinali) pesiArchiFinali(i,i) := inf
+	
+	!Inserisco i vincoli
+	forall(i in 1..nNodiFinali, j in 1..nNodiFinali )
+			x(i,j) is_binary
+	
+	forall (j in 1..nNodiFinali | j<>1)
+		sum(i in 1..nNodiFinali) x(i,j) =1
+		
+	forall (i in 1..nNodiFinali | i<>1)
+		sum(j in 1..nNodiFinali) x(i,j) =1
+		
+
+	sum(i in 1..nNodiFinali) x(i,1) <= nMuletti
+	sum(j in 1..nNodiFinali) x(1,j) <= nMuletti
+
+	volS :=0    
+    pesoS := 0
+
+	forall (k in 1..nMerci)
+		generaS(Vprimo,S,k,nMerci,1)
+		
+	z := sum(i1 in 1..nNodiFinali,j1 in 1..nNodiFinali)  pesiArchiFinali(i1,j1)*x(i1,j1)
+	
+	minimize(z)
+end-procedure
+
+procedure stampa
+	
+	!stampo la matrice finale
+	writeln ("Pesi archi del grafo finale :")
+	forall (i in 1..nNodiFinali) do 
+		forall(j in 1..nNodiFinali)
+			write(pesiArchiFinali(i,j)," ")
+		writeln("");
+	end-do
+	
+	!Stampo i risultati del modello
+	writeln("");
+	writeln("Route modello")
+	mulettiUsati:=0
+	forall(i in 1..nNodiFinali,j in 1..nNodiFinali)
+		if(x(i,j).sol = 1) then
+			if(i=1)then
+				mulettiUsati:=mulettiUsati+1
+			end-if
+			writeln("i: ",i ," j: ",j)
+		end-if
+	writeln( "\nPeso cammino minimo modello : ",getobjval )
+	writeln( "Muletti usati modello: ",mulettiUsati )
+	
+	
+	!Stampo i risultati dell'euristico
+	write("\nRoute euristico: ")
+	writeln("")
+	forall(i in 1..nMerci) do
+		forall(j in 1..3)
+			write(route(i,j)," ")
+		writeln("")
+	end-do
+	
+	writeln("\nPeso cammino minimo euristico : ",pesoEuristico)
+	writeln("Muletti usati euristico : ",mulettiEuristico)
+	writeln("")
+	
+	
+	
+end-procedure
+
+!Invocazione procedure
+CamminiMinimi
+ClarkWright
+VRP
+stampa
+
+end-model
