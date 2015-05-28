@@ -1,4 +1,7 @@
-File della cartella:
+Progetto svolto in collaborazione con Marcello Bertoli e Samuele Zecchini
+
+
+File presenti
 
 AGV : file .mos contenente l'implementazione Xpress del modello e dell'euristico
 datiAGV : dati per modello ed euristico con nMerci= 10
